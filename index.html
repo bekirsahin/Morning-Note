@@ -1,0 +1,280 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Morning Note</title>
+  <meta name="description" content="Minimal, black-and-white, online-only quote button." />
+  <style>
+    :root{
+      --bg:#ffffff;
+      --fg:#0b0b0b;
+      --muted:rgba(0,0,0,.45);
+      --stroke:rgba(0,0,0,.36);
+    }
+    *{ box-sizing:border-box; }
+    html,body{ height:100%; }
+
+    body{
+      margin:0;
+      background:var(--bg);
+      color:var(--fg);
+      font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial;
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+      overflow:hidden;
+    }
+
+    /* Faint title */
+    .title{
+      position:fixed;
+      top:22px;
+      left:0; right:0;
+      text-align:center;
+      font-size:12px;
+      letter-spacing:.18em;
+      text-transform:none;
+      color:var(--muted);
+      user-select:none;
+      pointer-events:none;
+    }
+
+    /* Center quote */
+    .center{
+      height:100%;
+      display:grid;
+      place-items:center;
+      padding: 70px 22px 120px;
+    }
+
+    .quote{
+      max-width: 920px;
+      text-align:center;
+      font-size: clamp(22px, 4.4vw, 44px);
+      line-height: 1.18;
+      font-weight: 600;
+      letter-spacing: -0.03em;
+      opacity: 0;
+      transform: translateY(8px);
+      transition: opacity .20s ease, transform .20s ease;
+      text-wrap: balance;
+    }
+    .quote.show{
+      opacity: 1;
+      transform: translateY(0);
+    }
+
+    .status{
+      position:fixed;
+      left:0; right:0;
+      bottom: 112px;
+      text-align:center;
+      font-size:12px;
+      color: var(--muted);
+      min-height: 16px;
+      padding: 0 18px;
+      user-select:none;
+      pointer-events:none;
+    }
+
+    /* Circular button bottom center */
+    .btn{
+      position:fixed;
+      left:50%;
+      bottom: 26px;
+      transform: translateX(-50%);
+      width: 76px;
+      height: 76px;
+      border-radius: 999px;
+      border: 1.5px solid var(--stroke);
+      background: transparent;
+      cursor:pointer;
+      user-select:none;
+      -webkit-tap-highlight-color: transparent;
+      box-shadow: 0 10px 28px rgba(0,0,0,.10);
+      transition: transform .08s ease, box-shadow .18s ease, border-color .18s ease, background .18s ease;
+    }
+
+    .btn:hover{
+      border-color: rgba(0,0,0,.55);
+      box-shadow: 0 12px 34px rgba(0,0,0,.12);
+      background: rgba(0,0,0,.02);
+    }
+    .btn:active{
+      transform: translateX(-50%) translateY(1px);
+      box-shadow: 0 8px 22px rgba(0,0,0,.10);
+    }
+    .btn:focus-visible{
+      outline: 2px solid rgba(0,0,0,.55);
+      outline-offset: 5px;
+    }
+
+    /* Loading ring (no icon/text) */
+    .btn.loading{
+      cursor: default;
+    }
+    .btn.loading::after{
+      content:"";
+      position:absolute;
+      inset: 10px;
+      border-radius:999px;
+      border: 2px solid rgba(0,0,0,.12);
+      border-top-color: rgba(0,0,0,.60);
+      animation: spin .9s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    @media (prefers-reduced-motion: reduce){
+      .quote{ transition:none; }
+      .btn{ transition:none; }
+      .btn.loading::after{ animation:none; }
+    }
+  </style>
+</head>
+
+<body>
+  <div class="title">Morning Note</div>
+
+  <div class="center">
+    <div id="quote" class="quote"></div>
+  </div>
+
+  <div id="status" class="status"></div>
+
+  <button id="btn" class="btn" aria-label="Get a quote" title="Get a quote"></button>
+
+  <script>
+    // ✅ Online-only: no local quote list.
+    // Fix for "stuck on Loading": add request timeouts via AbortController.
+
+    const quoteEl = document.getElementById("quote");
+    const statusEl = document.getElementById("status");
+    const btn = document.getElementById("btn");
+
+    let inFlight = false;
+
+    function setStatus(t=""){ statusEl.textContent = t; }
+
+    function setQuote(text){
+      quoteEl.textContent = text;
+      quoteEl.classList.remove("show");
+      void quoteEl.offsetWidth;
+      quoteEl.classList.add("show");
+    }
+
+    // Normalize Title Case quotes to sentence case (keeps I / I'm etc.)
+    function looksLikeTitleCase(s){
+      const words = (s || "").trim().split(/\s+/).filter(Boolean);
+      if (words.length < 6) return false;
+      let caps = 0, alphaWords = 0;
+      for (const w of words){
+        const clean = w.replace(/^[^A-Za-z]+|[^A-Za-z]+$/g, "");
+        if (!clean) continue;
+        alphaWords++;
+        if (/^[A-Z][a-z]/.test(clean)) caps++;
+      }
+      return alphaWords > 0 && (caps / alphaWords) >= 0.70;
+    }
+
+    function toSentenceCaseSmart(s){
+      if (!s) return s;
+      let t = s.toLowerCase();
+      t = t.replace(/(^|[.!?]\s+)([a-z])/g, (m, p1, p2) => p1 + p2.toUpperCase());
+      t = t.replace(/\bi\b/g, "I");
+      t = t.replace(/\bi'm\b/g, "I'm");
+      t = t.replace(/\bi've\b/g, "I've");
+      t = t.replace(/\bi'll\b/g, "I'll");
+      t = t.replace(/\bi'd\b/g, "I'd");
+      return t;
+    }
+
+    // "Motivation-ish" filter (no quotes stored)
+    const keywords = [
+      "discipline","focus","goal","dream","start","today","progress","courage","habit","momentum",
+      "future","strength","work","hard","success","effort","consistent","action","believe","keep going"
+    ];
+    function isMotivational(text){
+      const t = String(text || "").toLowerCase();
+      if (t.length < 25) return false;
+      return keywords.some(k => t.includes(k));
+    }
+
+    async function fetchJsonWithTimeout(url, ms){
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), ms);
+
+      try{
+        const res = await fetch(url, { cache: "no-store", signal: controller.signal });
+        if (!res.ok) throw new Error("HTTP " + res.status);
+        return await res.json();
+      } finally {
+        clearTimeout(timer);
+      }
+    }
+
+    async function fetchFromQuotable(){
+      // Quotable returns an array for /quotes/random
+      const url = "https://api.quotable.io/quotes/random?limit=1&minLength=60&maxLength=160&tags=inspirational|success|wisdom";
+      const data = await fetchJsonWithTimeout(url, 6500);
+      const q = data && data[0];
+      if (!q || !q.content) throw new Error("Bad data");
+      return q.content;
+    }
+
+    async function fetchFromDummyJSON(){
+      const url = "https://dummyjson.com/quotes/random";
+      const q = await fetchJsonWithTimeout(url, 6500);
+      if (!q || !q.quote) throw new Error("Bad data");
+      return q.quote;
+    }
+
+    async function getQuote(){
+      if (inFlight) return; // prevent multi-tap overlap
+      inFlight = true;
+
+      btn.disabled = true;
+      btn.classList.add("loading");
+      setStatus("Loading…");
+
+      const sources = [
+        { name: "Quotable", fn: fetchFromQuotable },
+        { name: "DummyJSON", fn: fetchFromDummyJSON },
+      ];
+
+      const attempts = 6;
+
+      try{
+        for (let i=0; i<attempts; i++){
+          for (const src of sources){
+            try{
+              let text = await src.fn();
+              if (looksLikeTitleCase(text)) text = toSentenceCaseSmart(text);
+              if (isMotivational(text)){
+                setQuote(text);
+                setStatus("");
+                return;
+              }
+            } catch (_) {
+              // try next source
+            }
+          }
+        }
+        setStatus("Couldn’t load a quote. Tap again.");
+      } finally {
+        btn.disabled = false;
+        btn.classList.remove("loading");
+        inFlight = false;
+      }
+    }
+
+    btn.addEventListener("click", getQuote);
+
+    window.addEventListener("keydown", (e) => {
+      if (e.code === "Space"){
+        e.preventDefault();
+        getQuote();
+      }
+    });
+  </script>
+</body>
+</html>
